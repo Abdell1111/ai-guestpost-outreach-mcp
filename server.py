@@ -33,6 +33,11 @@ def get_imap_connection():
 
 def get_gmail_folder(mail, keyword: str) -> str:
     """Auto-detect Sent or Drafts folder name across any Gmail language."""
+    if keyword.lower() == "drafts":
+        return "[Gmail]/Drafts"
+    if keyword.lower() == "sent":
+        return "[Gmail]/Sent Mail"
+
     status, folders = mail.list()
     for f in folders:
         decoded = f.decode("utf-8", errors="ignore")
