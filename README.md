@@ -1,52 +1,51 @@
-# AI Guest Post & Backlink Outreach MCP (`ai-guestpost-outreach-mcp`)
+# AI Guest Post Outreach MCP Server
 
-An open-source **Model Context Protocol (MCP) server** that lets AI assistants (Claude Desktop, Claude Code CLI, Gemini, OpenAI Codex, Cursor) automate end-to-end guest post discovery, duplicate verification, and dual-draft email preparation directly in Gmail for **any niche**—with **zero Google Cloud Console setup required**.
+An automated Model Context Protocol (MCP) server built in Python that scrapes the web for niche guest post opportunities, extracts verified contact emails, checks existing Gmail communication to prevent duplicate outreach, and generates dual-draft HTML outreach pitches directly inside your Gmail account.
 
-## Core Features
-
-- **All-Niche Prospect Discovery (`find_niche_guest_post_prospects`):** Searches the web for blogs and publications accepting guest posts in any industry (SaaS, Travel, UI/UX, Recruitment, E-commerce, Tech) and automatically extracts public editor/contact emails.
-- **Duplicate Outreach Protection (`check_duplicate_outreach`):** Scans your Gmail `Sent` and `Drafts` folders before pitching so you never double-pitch the same domain or editor.
-- **Simultaneous Dual-Draft Pipeline (`prepare_dual_outreach_drafts`):**
-  1. **Draft 1 (The Cold Pitch):** Creates a clean, minimalist HTML pitch card offering 3 tailored article concepts.
-  2. **Draft 2 (The Pre-Written Article):** Simultaneously creates a second Gmail draft addressed to the exact same recipient containing the complete, publication-ready HTML guest post—ready to hit send the moment the editor accepts your pitch.
+## Tech Stack
+* **Python (v3.12)** with virtual environment support.
+* **DuckDuckGo Search (`ddgs`)** & HTTP clients for prospect discovery.
+* **IMAP (`imaplib`)** for direct Gmail draft integration and duplicate checking.
+* **Model Context Protocol (MCP)** for seamless integration with AI clients (e.g., Claude Desktop).
 
 ---
 
-## Quick Start (No Google Cloud / OAuth Needed)
+## Installation & Setup
 
-### 1. Clone & Install Dependencies
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/Abdell1111/ai-guestpost-outreach-mcp.git](https://github.com/Abdell1111/ai-guestpost-outreach-mcp.git)
+   cd ai-guestpost-outreach-mcp
+Create and activate a virtual environment:
 
-    git clone https://github.com/Abdell1111/ai-guestpost-outreach-mcp.git
-    cd ai-guestpost-outreach-mcp
-    pip install -r requirements.txt
+Bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+pip install "mcp<2"
+Connecting to AI Assistants (Claude Desktop MCP)
+Add this entry to your claude_desktop_config.json:
 
-### 2. Add to Your AI Client (With Your Gmail App Password)
-
-1. Go to your [Google Account App Passwords](https://myaccount.google.com/apppasswords) page and generate a 16-letter App Password.
-2. Add this block to your local `claude_desktop_config.json`, `.mcp.json`, or Cursor/Codex MCP settings:
-
-    {
-      "mcpServers": {
-        "outreach-engine": {
-          "command": "python",
-          "args": ["/absolute/path/to/ai-guestpost-outreach-mcp/server.py"],
-          "env": {
-            "GMAIL_ADDRESS": "your.email@gmail.com",
-            "GMAIL_APP_PASSWORD": "xxxx xxxx xxxx xxxx"
-          }
-        }
+JSON
+{
+  "mcpServers": {
+    "guestpost-outreach": {
+      "command": "python",
+      "args": ["/path/to/ai-guestpost-outreach-mcp/server.py"],
+      "env": {
+        "GMAIL_ADDRESS": "your-email@gmail.com",
+        "GMAIL_APP_PASSWORD": "your-gmail-app-password"
       }
     }
+  }
+}
+Ready-to-Use AI Prompt Template
+Copy and paste this template into your AI assistant once connected:
 
----
+Plaintext
+Find [NUMBER] guest post opportunities for the niche "[YOUR_NICHE]" and automatically prepare outreach drafts for each discovered prospect. 
 
-## Example Prompts in AI Chat
+For the outreach emails, ensure the cold pitch and the full article draft include a natural contextual backlink pointing to my website: [YOUR_WEBSITE_URL] ([YOUR_WEBSITE_NAME]).
+Example:
 
-Once connected, prompt your AI assistant in plain English:
-
-- *"Find 5 UI/UX design blogs accepting guest posts, check if I have ever emailed them in Gmail, and prepare the dual drafts (pitch + full article) linking to my website."*
-- *"Check if we ever pitched editor@exampleblog.com. If not, prepare a guest post pitch with 3 topic ideas and simultaneously prepare the second draft with the full 1,000-word HTML article for Topic #1."*
-
-## License
-
-MIT License
+"Find 5 guest post opportunities for the niche "Morocco travel & desert tours" and automatically prepare outreach drafts for each discovered prospect. For the outreach emails, ensure the cold pitch and the full article draft include a natural contextual backlink pointing to my website: https://marruecos.cc (Marruecos)."
