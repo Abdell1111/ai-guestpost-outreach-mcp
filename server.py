@@ -1,6 +1,7 @@
 import os
 import re
-import base64
+import time
+import imaplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Dict
@@ -8,34 +9,38 @@ import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from mcp.server.fastmcp import FastMCP
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
 
 # Initialize MCP Server for Claude, Gemini, OpenAI Codex, and Cursor
 mcp = FastMCP("GuestPost-Outreach-Engine")
 
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.compose"
-]
+IMAP_HOST = "imap.gmail.com"
 
 
-def get_gmail_service():
-    """Authenticate and return the Gmail API service instance."""
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-    return build("gmail", "v1", credentials=creds)
+def get_imap_connection():
+    """Connect to Gmail via built-in IMAP using simple environment variables."""
+    gmail_user = os.environ.get("GMAIL_ADDRESS")
+    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
+
+    if not gmail_user or not gmail_pass:
+        raise ValueError(
+            "Missing GMAIL_ADDRESS or GMAIL_APP_PASSWORD in your MCP config env!"
+        )
+
+    mail = imaplib.IMAP4_SSL(IMAP_HOST)
+    mail.login(gmail_user, gmail_pass.replace(" ", ""))
+    return mail, gmail_user
+
+
+def get_gmail_folder(mail, keyword: str) -> str:
+    """Auto-detect Sent or Drafts folder name across any Gmail language."""
+    status, folders = mail.list()
+    for f in folders:
+        decoded = f.decode("utf-8", errors="ignore")
+        if keyword.lower() in decoded.lower():
+            parts = decoded.split(' "/" ')
+            if len(parts) == 2:
+                return parts[1].strip('"')
+    return f'"[Gmail]/{keyword.capitalize()}"'
 
 
 def render_pitch_html(recipient_name: str, site_name: str, topics: List[Dict[str, str]], sender_name: str, sender_url: str) -> str:
@@ -82,19 +87,21 @@ def render_article_delivery_html(recipient_name: str, article_title: str, articl
     """
 
 
-def create_gmail_draft(service, to_email: str, subject: str, html_content: str) -> str:
-    """Create an HTML draft in Gmail and return the Draft ID."""
+def save_imap_draft(mail, from_email: str, to_email: str, subject: str, html_content: str):
+    """Save an HTML email directly into Gmail's Drafts folder via IMAP."""
     msg = MIMEMultipart("alternative")
+    msg["From"] = from_email
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.attach(MIMEText(html_content, "html"))
 
-    raw_msg = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-    draft = service.users().drafts().create(
-        userId="me",
-        body={"message": {"raw": raw_msg}}
-    ).execute()
-    return draft["id"]
+    drafts_folder = get_gmail_folder(mail, "Drafts")
+    mail.append(
+        f'"{drafts_folder}"',
+        "\\Draft",
+        imaplib.Time2Internaldate(time.time()),
+        msg.as_bytes()
+    )
 
 
 @mcp.tool()
@@ -151,18 +158,27 @@ def find_niche_guest_post_prospects(niche: str, max_results: int = 5) -> List[Di
 @mcp.tool()
 def check_duplicate_outreach(email_or_domain: str) -> dict:
     """
-    Check Gmail Sent and Drafts folders to verify if a blog domain or editor email
-    has already been pitched.
+    Check Gmail Sent and Drafts folders via IMAP to verify if a blog domain
+    or editor email has already been pitched.
     """
-    service = get_gmail_service()
-    query = f"to:{email_or_domain} OR {email_or_domain}"
-    results = service.users().messages().list(userId="me", q=query, maxResults=5).execute()
-    messages = results.get("messages", [])
+    mail, _ = get_imap_connection()
+    matches = 0
 
+    for folder_key in ["Sent", "Drafts"]:
+        try:
+            folder_name = get_gmail_folder(mail, folder_key)
+            mail.select(f'"{folder_name}"', readonly=True)
+            _, data = mail.search(None, f'(TO "{email_or_domain}")')
+            if data and data[0]:
+                matches += len(data[0].split())
+        except Exception:
+            pass
+
+    mail.logout()
     return {
         "target": email_or_domain,
-        "already_contacted": len(messages) > 0,
-        "matching_threads_count": len(messages)
+        "already_contacted": matches > 0,
+        "matching_messages_count": matches
     }
 
 
@@ -183,40 +199,32 @@ def prepare_dual_outreach_drafts(
     1. Draft 1: The initial guest post pitch with 3 topic ideas.
     2. Draft 2: The ready-to-send full guest post article for when they accept the pitch.
     """
-    service = get_gmail_service()
-
     history = check_duplicate_outreach(recipient_email)
     if history["already_contacted"]:
         return {
             "status": "SKIPPED_DUPLICATE",
-            "message": f"Found {history['matching_threads_count']} existing message(s)/draft(s) for {recipient_email}."
+            "message": f"Found {history['matching_messages_count']} existing message(s)/draft(s) for {recipient_email}."
         }
 
-    pitch_html = render_pitch_html(recipient_name, site_name, topics, sender_name, sender_url)
-    pitch_draft_id = create_gmail_draft(
-        service=service,
-        to_email=recipient_email,
-        subject=pitch_subject,
-        html_content=pitch_html
-    )
+    mail, from_email = get_imap_connection()
 
+    # Draft 1: Cold Pitch
+    pitch_html = render_pitch_html(recipient_name, site_name, topics, sender_name, sender_url)
+    save_imap_draft(mail, from_email, recipient_email, pitch_subject, pitch_html)
+
+    # Draft 2: Full Article Ready to Send
     article_subject = f"Re: {pitch_subject} [Full Draft: {selected_article_title}]"
     article_html = render_article_delivery_html(
         recipient_name, selected_article_title, full_article_html, sender_name, sender_url
     )
-    article_draft_id = create_gmail_draft(
-        service=service,
-        to_email=recipient_email,
-        subject=article_subject,
-        html_content=article_html
-    )
+    save_imap_draft(mail, from_email, recipient_email, article_subject, article_html)
+
+    mail.logout()
 
     return {
         "status": "SUCCESS",
         "recipient": recipient_email,
-        "pitch_draft_id": pitch_draft_id,
-        "article_draft_id": article_draft_id,
-        "summary": "Created both the initial pitch draft and the full article delivery draft in Gmail."
+        "summary": "Saved both the initial pitch draft and the full article delivery draft directly in Gmail Drafts."
     }
 
 
